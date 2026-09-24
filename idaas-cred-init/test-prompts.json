@@ -1,0 +1,52 @@
+[
+  {
+    "id": 1,
+    "prompt": "帮我把本机的 aliyun-cli 接入 IDaaS 无 AK 凭证，我的实例域名是 acme.aliyunidaas.com，client-id 是 app_m57b47kt4orcjymgybmrl53vty",
+    "expected": "从 GitHub Releases 获取最新 broker release 并与本地版本比较，缺失或落后时安装/升级；检测 aliyun-cli 已安装（aws-cli 可选）；跑 onboard --instance acme.aliyunidaas.com --client-id app_m57b47kt4orcjymgybmrl53vty；呈现 user_code + 等待浏览器 MFA；onboard 收尾后用 aliyun --profile <p> sts GetCallerIdentity 验证；列出 profile。全程不回显凭证。"
+  },
+  {
+    "id": 2,
+    "prompt": "我有个用阿里云 SDK 的 skill，想让它不写死 AK、自动拿临时凭证，怎么接？实例是 dev.aliyunidaas.com",
+    "expected": "识别 SDK/credentials_uri 路径，如实说明 onboard 暂不自动写该 env、serve 懒 daemon 待实现；给手动步骤；仍走 onboard 完成登录与角色发现；不谎称已自动接入。"
+  },
+  {
+    "id": 3,
+    "prompt": "我按流程 onboard 之后，aliyun --profile aliyun-oss-read sts GetCallerIdentity 报 403，帮我看看",
+    "expected": "按失败表映射 403：角色未 onboard / PS 未授权；区分 POP 401（Bearer 失效重新 login）与 list 空；明确告知 profile 已就绪，修复后直接重试无需重新 onboard；不索取凭证。"
+  },
+  {
+    "id": 4,
+    "prompt": "我这个用户能 assume 好几个阿里云角色（oss 只读、全量只读、还有个运维的），onboard 之后我想默认用全量只读那个",
+    "expected": "识别多角色：onboard 已为每个角色各建 --profile、默认取首个；列出角色让用户选；用户选'全量只读'后改 ~/.aliyun/config.json 的 current + broker current_profile（若配了 aws-cli 提示用 AWS_PROFILE）；说明其余角色仍可用 --profile。"
+  },
+  {
+    "id": 5,
+    "prompt": "我想看看我在这个实例上能用哪些云角色，先不接入",
+    "expected": "路由到流程 B：跑 show roles --instance <域名>（自动 login 用缓存 + 调 listAssumable）；表格展示角色名/ARN/厂商/状态；不生成 profile；询问是否要接入。"
+  },
+  {
+    "id": 6,
+    "prompt": "我之前接入过，现在 token 过期了 aliyun 报错，帮我弄一下",
+    "expected": "路由到流程 D：先 show profiles 列出；判断用 login --profile <p> 刷新（access 过期）还是 login --instance <域名> --force-new（refresh 也过期）；呈现设备码等待 MFA；验证；明确告知不需重跑 onboard。"
+  },
+  {
+    "id": 7,
+    "prompt": "我还想同时配一下 aws-cli 用 IDaaS 凭证，实例还是 acme.aliyunidaas.com",
+    "expected": "检测 aws-cli 已安装；跑 onboard --instance acme.aliyunidaas.com --client-id <已有的> --target aws-cli（只补 AWS 配置，不覆盖已有 aliyun 配置）；验证 aws --profile <p> sts get-caller-identity；说明 fetch-token 自动检测 AWS STS 格式输出。"
+  },
+  {
+    "id": 8,
+    "prompt": "帮我看看当前凭证状态",
+    "expected": "路由到流程 C：跑 status；展示 Profile/Provider/Instance/Serve 状态；按状态引导（正常→无需操作，token 过期→login 刷新，无 config→onboard）。"
+  },
+  {
+    "id": 9,
+    "prompt": "我要登出，清除本地凭证",
+    "expected": "路由到流程 E：询问登出哪个 profile（或全部）；先 logout --dry-run 预览；确认后 logout --profile <p>；告知 profile 配置保留，重新 login 即可恢复。"
+  },
+  {
+    "id": 10,
+    "prompt": "我还需要在这台机器上安装腾讯云 TCCLI，帮我检查并安装。",
+    "expected": "先用 command -v tccli 检测；未安装时检查 Python/pip，macOS 可用 brew tap tencentcloud/tccli && brew install tccli，其他环境优先用 python3 -m pip install --user --upgrade tccli（Windows 用 py -m pip）；安装后以 tccli --version 验证。必须先通过 broker onboard --help 确认 target 支持，未列出 tccli 时不得执行 --target tccli，也不得声称已完成 TCCLI 无 AK 接入。"
+  }
+]
