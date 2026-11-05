@@ -1,7 +1,8 @@
 ---
 name: idaas-cred-init
-description: 给本机 阿里云 skill / aliyun-cli / aws-cli / tccli 配置 IDaaS 无 AK 凭证（短时 STS 自动续期）。当用户提到云凭证接入、无 AK 登录、查询云角色、token 刷新、登出或排查接入失败时使用。只做编排，不接触凭证本身。
-version: 0.1.0
+description: 给本机 阿里云 skill / aliyun-cli / aws-cli / tccli 配置 IDaaS 无 AK 凭证（短时 STS 自动续期）。当用户提到云凭证接入、无 AK 登录、查询云角色（含权限模板创建/授权的角色发现）、token 刷新、登出或排查接入失败时使用。只做编排，不接触凭证本身。
+metadata:
+  version: "0.2.0"
 ---
 
 # 云凭证接入（thin orchestration）
@@ -17,9 +18,10 @@ version: 0.1.0
 3. **不泄漏凭证到对话**：任何时候都不要把 token、AK/SK、缓存内容回显到对话、日志或新文件里。验证只看"调用是否成功"，不看凭证明文。
 4. **只从授权来源装 broker**：broker 未安装/版本过旧时，仅从 GitHub（`aliyunidaas/alibaba-cloud-idaas`）静默下载，校验确是可执行文件后再启用。
 
-## 前提（一次性，缺失 onboard 会失败）
+## 接入前提与模板角色发现能力
 
-1. **目标云角色**已在目标云账号完成配置（RAM/IAM/CAM OIDC provider + 角色 + 信任策略），已在 IDaaS 添加对应的云账号、云角色，且已完成当前登录用户/组的授权。
+1. **目标云角色**已在目标云账号完成配置（RAM/IAM/CAM OIDC provider + 角色 + 信任策略），并在 IDaaS 配置云账号和角色。当前登录用户须通过直接授权（含组继承），或通过已授权、处于 ENABLED 状态且用途为 USER 的权限模板获得角色访问权限；模板关联角色及云侧信任配置仍须有效。
+2. **模板角色发现能力**：支持该能力的配套 Broker 在 `onboard`、`show roles` 及其重试/续页请求中，须固定设置 `includePermissionTemplateRoles=true`，并消费全部 `NextToken`。这不是用户接入参数，不询问用户、不提供 false 选项，不添加未经 Broker 支持的 CLI flag。按 [配套版本核验](references/role-discovery.md#配套版本核验) 分级处理：常规接入不因能力未确认而中断；以模板角色为验收目标时才要求先确认配套能力。不能仅凭“已是最新版”认定支持。
 
 ## 意图路由
 
@@ -28,7 +30,7 @@ version: 0.1.0
 | 用户意图 | 路由到 | 核心命令 |
 |---------|--------|---------|
 | "接入凭证" / "配置 CLI" / "onboard" | **流程 A：接入** | `onboard --instance <域名> --target <已安装的CLI>` |
-| "看看我能用哪些角色" / "查看云角色" | **流程 B：查询角色** | `show roles --instance <域名>` |
+| "看看我能用哪些角色" / "查看云角色" / "我申请过哪些权限模板" | **流程 B：查询角色** | `show roles --instance <域名>` |
 | "token 过期了吗" / "token 过期了" / "刷新登录" / "aliyun/aws 报错" | **流程 C：刷新登录** | `login --profile <p>` 或 `login --instance <域名>` |
 | "登出" / "清除凭证" | **流程 D：登出** | `logout --profile <p>` |
 
@@ -37,6 +39,8 @@ version: 0.1.0
 ## 流程 A：接入（onboard）
 
 ### A0 检测 + 安装/版本校验
+
+**指定本地 CLI 测试**：用户明确提供本地可执行文件（或 `IDAAS_BIN`）并要求不下载/不升级时，固定使用该路径，执行 `version` 验证后跳过 GitHub 查询及安装/升级步骤。不因 PATH 上另有版本而替换它；文件不存在或不可运行时停止并报告，不自动下载兜底。模板能力仍按配套版本核验确认，不能仅凭版本号认定支持。`IDAAS_BIN` 是 Skill 选择可执行文件的约定，不是 CLI 自身的参数。
 
 1. **检测本机 broker**：`<bin>` 解析顺序为 `$IDAAS_BIN`（已设且可执行）→ PATH 上的 `alibaba-cloud-idaas` → 已知安装路径（Windows 为 `%LOCALAPPDATA%\alibaba-cloud-idaas\alibaba-cloud-idaas.exe`）。执行 `<bin> version` 验证。
    - 找不到或不可运行 → 走第 3 步（安装）；可用 → 走第 4 步（版本校验）。
@@ -59,7 +63,7 @@ version: 0.1.0
    - 本地版本低 → 按第 3 步下载升级；等于 → 继续；高于（如开发版）→ 不自动降级，提示后继续。
    - 本地版本无法解析或 `<bin> version` 执行失败 → 视为无效安装，按第 3 步重装。
 5. **检测已安装的 CLI 工具**：`aliyun version` / `aws --version` / `tccli --version` 逐个检测；按 broker 实际支持且已安装的 CLI 建议 `--target` 值（如三者都装 → `--target aliyun-cli,aws-cli,tencentcloud-cli`）。用户需要但未安装的 CLI → 按 `references/install-guides.md` 对应小节引导安装，**不阻塞**其他 CLI 的 onboard。
-6. **成功判据**：`<bin> version` 可运行，且已完成与 GitHub 最新 release 的比较；若 GitHub 查询失败但已有可运行 broker，明确提示未完成最新版校验后可进入 A1。
+6. **成功判据**：`<bin> version` 可运行，且已完成与 GitHub 最新 release 的比较；若 GitHub 查询失败但已有可运行 broker，明确提示未完成最新版校验后可进入 A1。版本新旧检查与模板角色发现能力检查分开记录，按 [配套版本核验](references/role-discovery.md#配套版本核验) 分级处理；常规接入可继续，模板角色专项验收须先确认配套能力。
 
 ### A1 收集接入参数（一轮交互）
 
@@ -67,7 +71,7 @@ version: 0.1.0
   - **已有 profile**（非首次接入）：`--instance` 和 `--client-id` 均可省略（自动从已有 profile 推断）。只需确认是否要 `--target`（追加其它 CLI 工具）或 `--prefix`（区分实例）。可直接进入 A2。
   - **无 profile**（首次接入）：**一条消息**同时收集：
     - **实例域名 `<domain>`**（必填，如 `acme.aliyunidaas.com`，含/不含 `https://` 皆可，自动规范化）。
-    - **`--client-id`**（可选，省略时使用内置 `iap_cloud_idaas_cli` 系统应用——出厂预授权 PAM `.all`、不受 license 限制）。仅当用户有自己的 broker 客户端应用时传入覆盖。
+    - **`--client-id`**（可选，省略时使用内置 `iap_cloud_idaas_cli` 系统应用）。该应用的客户端 scope 授权不等于用户授权：用户还须有该应用访问权限及所需 PAM scope；系统应用可能不显示在普通应用列表。相关拒绝按 troubleshooting 的登录阶段排查。仅当用户有自己的 broker 客户端应用时传入覆盖。
     - 告知 A0 检测到的 CLI 工具，建议 `--target` 值；用户可覆盖。
     - 可选：`--vpc` / `--prefix`（默认按厂商自动选择），不提则用默认。
 - 汇总为 onboard 参数交 A2。
@@ -77,6 +81,7 @@ version: 0.1.0
 - 首次：`<bin> onboard --instance <domain> [--client-id <app_id>] [--target ..] [--vpc] [--prefix ..] > <log> 2>&1`
 - 非首次（已有 profile）：`<bin> onboard [--target ..] > <log> 2>&1`（--instance / --client-id 自动推断）
 - **后台运行**（因阻塞在设备码轮询等待人工 MFA）。
+- 角色发现由配套 Broker 固定使用 `includePermissionTemplateRoles=true` 并拉完分页；保持上述命令形式，不为此增加交互开关或手工绕过 Broker 调 API。
 
 ### A3 取并呈现设备码
 
@@ -91,7 +96,7 @@ version: 0.1.0
 ### A5 读取生成结果
 
 - 读 `<log>` 尾 `Done. Generated N profile(s)` + 跑 `<bin> show profiles`。
-- N≥1 → A6；N=0 → references/troubleshooting.md（列角色阶段）。
+- N≥1 → A6；N=0 → references/troubleshooting.md（列角色阶段）。只有 Broker 完整发现所有页且成功退出，才可把结果作为完整角色列表；分页失败或超限不得当作成功或“没有授权”。
 
 ### A6 选默认角色（仅 N>1）
 
@@ -101,6 +106,8 @@ version: 0.1.0
 
 按厂商分组展示生成的 profile，让用户选择默认：
 **注意**：每个 CLI 工具独立选择默认。按已配置的 CLI 逐厂商询问（如先阿里云默认角色，再 AWS，再腾讯云）。如果某个厂商只有一个角色，自动设为该厂商默认，无需询问。
+
+Broker 输出含 `createdByPermissionTemplate` 时，在选择列表中加「模板创建：是/否/未知」标注：true=是、false=否、null=未知。该标注仅作背景信息，不得据此推断授权来源、过滤角色或预填默认选择；Broker 未输出该字段时不显示该列、不自行补值。
 
 #### A6.2 按选择设置默认
 
@@ -145,13 +152,16 @@ version: 0.1.0
 
 当用户只想查看可用角色、暂不接入时：
 
-1. 检测 broker（同 A0，但只检测不安装——若未装则提示先安装）。
+本流程涵盖直接授权 + 权限模板角色，由配套 Broker 固定 true 发现，见 [角色发现契约与验收](references/role-discovery.md)。`show roles` 展示当前可发现角色，不提供权限模板申请历史或审批状态；用户询问“我申请过哪些权限模板”时，先区分当前可用角色与申请记录，不能从角色列表反推申请历史。
+
+1. 检测 broker（同 A0，但只检测不安装——若未装则提示先安装），并按 [配套版本核验](references/role-discovery.md#配套版本核验) 区分常规查询与模板角色专项验收。能力未确认时，常规查询继续并提示结果可能不含模板角色；专项验收先完成配套能力核验。
 2. **检查是否已有 profile**：
    - 已有 profile：直接 `<bin> show roles`（--instance / --client-id 自动推断）。
    - 无 profile：询问实例域名（`--client-id` 可选），运行 `<bin> show roles --instance <域名> [--client-id <app_id>]`。
 3. （可选 `--config` 指定配置文件、`--json` 机器可读输出）
-4. 以表格呈现：角色名 / Role ARN / 厂商 / 状态。
-5. 询问"要接入吗？"——是 → 转流程 A（已有 profile 则跳过 A1）；否 → 结束。
+4. 配套 Broker 固定传 `includePermissionTemplateRoles=true` 并自动消费全部分页；不向用户询问该值，不添加同名 CLI flag。分页错误或超限时报告失败，不能将部分输出描述为全部可用角色。
+5. 以表格呈现：角色名 / Role ARN / 厂商 / 状态。Broker 输出含 `createdByPermissionTemplate` 时，增列“模板创建”：true=是、false=否、null=未知。该字段表示角色自身是否由模板创建，不能据此判断本次授权来源，也不用于过滤或预填默认角色选择；Broker 未输出该字段时不显示该列、不自行补值。
+6. 询问"要接入吗？"——是 → 转流程 A（已有 profile 则跳过 A1）；否 → 结束。
 
 ---
 
