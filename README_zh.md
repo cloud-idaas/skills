@@ -13,7 +13,7 @@
 | [idaas-go-akless-onboard](idaas-go-akless-onboard/SKILL.md) | 改造 Go OSS、SLS、通用 OpenAPI 的静态 AccessKey 认证 | 业务仓库、平台配置、角色 ARN；运行验证另需部署身份 |
 | [idaas-python-akless-onboard](idaas-python-akless-onboard/SKILL.md) | 改造 Python OSS、SLS、通用 OpenAPI 的静态 AccessKey 认证 | Python 3.9+、业务仓库、平台配置、角色 ARN |
 
-开发者本机交互接入使用 `idaas-cred-init`。如果需要修改业务代码，准备好相应平台配置和部署身份后，再使用对应语言 Skill。
+开发者本机交互接入使用 `idaas-cred-init`。如需改造业务代码，准备好相应平台配置和身份后，再使用对应语言 Skill。
 
 ## 通用前置条件
 

@@ -2,7 +2,7 @@
 name: idaas-cred-init
 description: 给本机 阿里云 skill / aliyun-cli / aws-cli / tccli 配置 IDaaS 无 AK 凭证（短时 STS 自动续期）。当用户提到云凭证接入、无 AK 登录、查询云角色（含权限模板创建/授权的角色发现）、token 刷新、登出或排查接入失败时使用。只做编排，不接触凭证本身。
 metadata:
-  version: "0.2.0"
+  version: "0.3.0"
 ---
 
 # 云凭证接入（thin orchestration）
@@ -65,16 +65,21 @@ metadata:
 5. **检测已安装的 CLI 工具**：`aliyun version` / `aws --version` / `tccli --version` 逐个检测；按 broker 实际支持且已安装的 CLI 建议 `--target` 值（如三者都装 → `--target aliyun-cli,aws-cli,tencentcloud-cli`）。用户需要但未安装的 CLI → 按 `references/install-guides.md` 对应小节引导安装，**不阻塞**其他 CLI 的 onboard。
 6. **成功判据**：`<bin> version` 可运行，且已完成与 GitHub 最新 release 的比较；若 GitHub 查询失败但已有可运行 broker，明确提示未完成最新版校验后可进入 A1。版本新旧检查与模板角色发现能力检查分开记录，按 [配套版本核验](references/role-discovery.md#配套版本核验) 分级处理；常规接入可继续，模板角色专项验收须先确认配套能力。
 
+### 配置兼容性检查
+
+首次写入云 CLI 配置前阅读 [配置与默认身份](references/configuration-compatibility.md)。用 `onboard --help`、`show instance --help`、`configure --help` 核对实际能力，不仅凭版本号假定新参数存在。新版本仅写 AWS 具名 profile；旧版可能自动建立 default，不能不提示就使用旧行为。用户指定本地 CLI 时继续遵守 A0，不擅自下载替换。存在多实例时明确核对目标域名、客户端及配置路径，不能沿用另一个实例的 client-id。
+
 ### A1 收集接入参数（一轮交互）
 
-- **先检查是否已有 profile**：跑 `<bin> show profiles`（或读配置文件：Mac/Linux `~/.cloud_idaas/idaas-cli.json`；Windows PowerShell `$env:USERPROFILE\.cloud_idaas\idaas-cli.json`）。
-  - **已有 profile**（非首次接入）：`--instance` 和 `--client-id` 均可省略（自动从已有 profile 推断）。只需确认是否要 `--target`（追加其它 CLI 工具）或 `--prefix`（区分实例）。可直接进入 A2。
+- **先检查是否已有 profile**：跑 `<bin> show profiles [--config <本轮绝对配置路径>]`，以命令打印的实际路径为准，不读取或输出整份配置。路径优先级为显式 `--config`、`ALIBABA_CLOUD_IDAAS_CONFIG_FILE`、已存在的旧路径 `~/.aliyun/alibaba-cloud-idaas.json`，最后为 `~/.cloud_idaas/idaas-cli.json`；Windows 的 `~` 对应用户目录。
+  - **已有 profile**（非首次接入）：先核对所选 profile 对应的实例和 client-id；目标唯一且符合用户意图时可省略。多个实例/客户端有歧义时让用户指定，不从列表首项猜测。确认 `--target`、配置路径及必要的 `--prefix`。
   - **无 profile**（首次接入）：**一条消息**同时收集：
     - **实例域名 `<domain>`**（必填，如 `acme.aliyunidaas.com`，含/不含 `https://` 皆可，自动规范化）。
     - **`--client-id`**（可选，省略时使用内置 `iap_cloud_idaas_cli` 系统应用）。该应用的客户端 scope 授权不等于用户授权：用户还须有该应用访问权限及所需 PAM scope；系统应用可能不显示在普通应用列表。相关拒绝按 troubleshooting 的登录阶段排查。仅当用户有自己的 broker 客户端应用时传入覆盖。
     - 告知 A0 检测到的 CLI 工具，建议 `--target` 值；用户可覆盖。
     - 可选：`--vpc` / `--prefix`（默认按厂商自动选择），不提则用默认。
-- 汇总为 onboard 参数交 A2。
+- 使用 AWS 时说明 ARN 的 partition 只决定兼容默认地域，不代表业务资源地域；用户要求覆盖且 CLI 支持时才传 `--aws-region`，不擅自改写已有合法地域。
+- 汇总参数并确认实例发现端点属于本轮获授权环境，再交 A2；测试使用独立绝对配置路径并保留该路径到后续查询和刷新。
 
 ### A2 后台启动 onboard
 
@@ -91,34 +96,31 @@ metadata:
 ### A4 等待人工 MFA
 
 - 不自动化。等后台完成通知（onboard 登录成功后自动续跑 list→generate→writeCLI 并退出）。
-- 退出码 0 → A5；超时/非 0 → 提示 `<bin> login --instance <domain> --force-new` 先刷新登录，再 onboard 重试。
+- 登录成功不等于配置成功。退出码 0 后进入 A5；非 0 时先按实际错误分阶段判断，不自动重跑 login。`FAILED <target>` 或部分成功时，报告已保存的 Broker 配置及失败的云工具，修复原因后仅重试相应 target；无角色、地域冲突、配置损坏和权限错误不能解释成登录过期。
+- 若后续首次云调用再次出现设备授权，按 [阶段口径](references/troubleshooting.md#认证与授权阶段口径) 记录发生阶段、是否为新的设备流及可用请求标识；不直接称“两次登录”，不自动重跑 login/onboard、不清理缓存。授权确认页面不等于重新身份认证。
 
 ### A5 读取生成结果
 
-- 读 `<log>` 尾 `Done. Generated N profile(s)` + 跑 `<bin> show profiles`。
+- 读取完整退出状态、`SUCCESS <target>`/`FAILED <target>` 和生成数量，再跑 `<bin> show profiles [--config <绝对配置路径>]`。只有对应 target 实际写入成功，才报告该工具接入成功；旧 CLI 的退出码 0 不能代替文件/错误检查。
+- 自动化需要结构化结果时，仅在 help 支持后使用 `--result-file <全新绝对路径.json>`。该文件与登录提示分离，读取 schema_version、status、stage、broker_config_saved 和 targets；不覆盖旧结果文件，不把失败 target 的 configuration_files 当作全部已写成功。结果文件写入失败也会非零退出，不能因此断言云配置未生成。
 - N≥1 → A6；N=0 → references/troubleshooting.md（列角色阶段）。只有 Broker 完整发现所有页且成功退出，才可把结果作为完整角色列表；分页失败或超限不得当作成功或“没有授权”。
 
-### A6 选默认角色（仅 N>1）
+### A6 选择验证角色及是否修改默认身份
 
-当 onboard 生成了多个 profile 时，**必须**让用户选择默认角色。单角色跳过此步。
+按云厂商展示本轮生成的 profile，让用户选择本次验证使用的角色。单角色可直接用该角色验证，但不能据此擅自覆盖任何既有默认身份。多个角色不能由名称、返回顺序或模板创建标志预选。
 
-#### A6.1 展示角色列表并询问用户
+Broker 输出含 `createdByPermissionTemplate` 时，标注“模板创建：是/否/未知”；仅作背景信息，不能推断授权来源、筛选角色或预填默认。
 
-按厂商分组展示生成的 profile，让用户选择默认：
-**注意**：每个 CLI 工具独立选择默认。按已配置的 CLI 逐厂商询问（如先阿里云默认角色，再 AWS，再腾讯云）。如果某个厂商只有一个角色，自动设为该厂商默认，无需询问。
+默认保留各工具既有身份，A7 一律显式传 `--profile`。首次空配置时 CLI 可能初始化 Broker/阿里云 current；如实报告实际值。AWS 新版只写具名 profile，不能把“已生成”说成“已设默认”。
 
-Broker 输出含 `createdByPermissionTemplate` 时，在选择列表中加「模板创建：是/否/未知」标注：true=是、false=否、null=未知。该标注仅作背景信息，不得据此推断授权来源、过滤角色或预填默认选择；Broker 未输出该字段时不显示该列、不自行补值。
+只有用户明确选择更改默认时，分别说明并执行：
 
-#### A6.2 按选择设置默认
+- 阿里云：`aliyun configure switch --profile <chosen>`，只影响阿里云 CLI。
+- Broker：确认 `configure switch --help` 支持后，运行 `<bin> configure switch --profile <chosen> [--config <绝对配置路径>]`，只影响 Broker。旧 CLI 不支持时保留现有值，继续用显式 profile，不编造参数或改写其他实例配置。
+- AWS：优先使用显式 `--profile`，或按用户要求在其实际会话中设置 `AWS_PROFILE`。若要求持久更改 default，按配置参考先检查已有 provider、credentials 和环境覆盖，单独确认影响；不得重拼遗漏 `--config` 的 credential_process，也不静默覆盖 SSO 默认。
+- 腾讯云：优先显式 profile。只有用户要求持久默认时，说明并确认 shell/用户环境变量影响，再设置 TCCLI_PROFILE；不自动追加用户 shell 配置。
 
-用户选择后，**按已配置的 CLI 分别设默认**：
-- **aliyun-cli**：`aliyun configure switch --profile <chosen>`
-- **aws-cli**：`aws configure set credential_process "<bin> fetch-token --profile <chosen>" --profile default`
-- **tccli**：
-  - Mac: `echo 'export TCCLI_PROFILE=<chosen>' >> ~/.zshrc && source ~/.zshrc`
-  - Linux: `echo 'export TCCLI_PROFILE=<chosen>' >> ~/.bashrc && source ~/.bashrc`
-  - Windows PowerShell: `[Environment]::SetEnvironmentVariable("TCCLI_PROFILE", "<chosen>", "User"); $env:TCCLI_PROFILE = "<chosen>"`
-- 写后验证各文件值正确。
+选择或写入后，支持时通过 `<bin> show status --profile <chosen> [--config <绝对配置路径>]` 核对 Broker/阿里云/AWS 各侧状态。默认身份不同不等于错误，也不能自动同步为同一值。
 
 ### A7 验证（按已配置的 CLI 分别验证）
 
@@ -134,16 +136,16 @@ Broker 输出含 `createdByPermissionTemplate` 时，在选择列表中加「模
 
 ### A8 完成
 
-- 列可用 profile + 当前默认。
+- 列出可用 profile、各工具实际默认和本轮验证结果；没有变更的默认明确保留，不宣称已同步。
 - 给示例（按已配置的 CLI 分别给）：
   - aliyun: `aliyun --profile <p> oss ls`
   - aws: `aws --profile <p> s3 ls`
   - tccli: `tccli --profile <p> cvm DescribeRegions`
 - **token 生命周期说明**：
-  - STS 自动续期（process_command/credential_process 透明触发 fetch-token）。
-  - access token 过期：`<bin> login --profile <p>` 刷新（--instance / --client-id 自动从 profile 读），不重跑 onboard。
-  - refresh token 过期（长期未用）：`<bin> login --instance <域名> [--client-id <app_id>] --force-new` 重新登录。
-  - 彻底清除：`<bin> logout --profile <p>`（保留 profile 配置）。
+  - 阿里云/AWS 的 STS 通过 process_command/credential_process 透明触发 fetch-token 自动续期；腾讯云使用静态凭证文件，不宣称自动续期，需要按实际支持的导出命令显式刷新。
+  - access token 过期：`<bin> login --profile <p> [--config <本轮绝对配置路径>]` 刷新（--instance / --client-id 自动从 profile 读），不重跑 onboard。
+  - refresh token 过期（长期未用）：确认该阶段错误后，用 `<bin> login --profile <p> [--config <本轮绝对配置路径>] --force-new` 重新授权，保留原实例和客户端上下文。
+  - 清除选中登录缓存：按流程 D 先预览并确认；保留本轮配置上下文及 profile 配置，不自行执行全局登出。
   - 后续追加 CLI 工具或刷新角色：直接 `<bin> onboard`（--instance / --client-id 自动推断）。
 
 ---
@@ -156,7 +158,7 @@ Broker 输出含 `createdByPermissionTemplate` 时，在选择列表中加「模
 
 1. 检测 broker（同 A0，但只检测不安装——若未装则提示先安装），并按 [配套版本核验](references/role-discovery.md#配套版本核验) 区分常规查询与模板角色专项验收。能力未确认时，常规查询继续并提示结果可能不含模板角色；专项验收先完成配套能力核验。
 2. **检查是否已有 profile**：
-   - 已有 profile：直接 `<bin> show roles`（--instance / --client-id 自动推断）。
+   - 已有 profile：核对实例/client-id 与用户意图后运行 `<bin> show roles [--instance <目标域名>] [--client-id <目标客户端>] [--config <绝对配置路径>]`；有歧义先让用户明确，不猜测。
    - 无 profile：询问实例域名（`--client-id` 可选），运行 `<bin> show roles --instance <域名> [--client-id <app_id>]`。
 3. （可选 `--config` 指定配置文件、`--json` 机器可读输出）
 4. 配套 Broker 固定传 `includePermissionTemplateRoles=true` 并自动消费全部分页；不向用户询问该值，不添加同名 CLI flag。分页错误或超限时报告失败，不能将部分输出描述为全部可用角色。
@@ -167,18 +169,18 @@ Broker 输出含 `createdByPermissionTemplate` 时，在选择列表中加「模
 
 ## 流程 C：刷新登录（login）
 
-当用户报告 token 过期、aliyun/aws 报错时：
+当用户报告 token 过期、aliyun/aws 报错时，先按 troubleshooting 的阶段口径确认是否属于登录问题；云 API、配置、授权或地域错误不自动转成重新登录：
 
-1. 询问是哪个 profile 报错（或跑 `<bin> show profiles` 列出让用户选）。
+1. 确认报错 profile 和本轮绝对配置路径（或跑 `<bin> show profiles [--config <路径>]` 列出让用户选）。
 2. **判断刷新方式**：
-   - **access token 过期（常见）**：`<bin> login --profile <p>`（从 profile 自动读 issuer+scope+client_id，**不需再传 --instance / --client-id**，重新设备码登录）。
-   - **refresh token 也过期（长期未用）**：`<bin> login --instance <域名> [--client-id <app_id>] --force-new`（`--client-id` 仅在要覆盖内置系统应用时提供）。
-   - 不确定 → 先试 `--profile`，失败再 `--instance [--client-id] --force-new`。
-3. 呈现设备码、等待 MFA（同 A3-A4）。
+   - **确认需刷新**：`<bin> login --profile <p> [--config <路径>]`，沿用该 profile 的 issuer/client-id/scope；是否需要设备授权由实际运行结果决定，不承诺一定弹窗或一定复用。
+   - **确认必须重新授权**：同一命令加 `--force-new`，仍保留 profile/config 上下文。无 profile 时才收集明确实例和客户端，不借用其他实例的配置。
+   - 原因不确定时先记录错误阶段和可用请求标识，不自动切换到另一个实例或强制重新授权。
+3. 仅当实际生成设备码时呈现链接、等待人工操作（同 A3-A4）；再次出现授权页按阶段参考记录，不直接认定又做了一次身份认证。
 4. 验证：
    - aliyun: `aliyun --profile <p> sts GetCallerIdentity`
    - aws: `aws --profile <p> sts get-caller-identity`
-   - tccli: **静态凭证，验证前先刷凭证文件**：`<bin> fetch-token --profile <p> --output ~/.tccli/<p>.credential`，再 `tccli --profile <p> sts GetCallerIdentity`
+   - tccli: **静态凭证，用户确认刷新指定文件后**：`<bin> fetch-token --profile <p> [--config <路径>] --output <已确认的绝对凭证文件路径>`，不读取文件/凭证 stdout，再 `tccli --profile <p> sts GetCallerIdentity`。
 5. 明确告知：
    - aliyun/aws：**只需 login 刷新，不需重跑 onboard**（不覆盖配置）
    - tccli：凭证需定期执行 `fetch-token --output` 刷新（过期时间见运行时失败表）
@@ -190,8 +192,8 @@ Broker 输出含 `createdByPermissionTemplate` 时，在选择列表中加「模
 当用户想清除凭证时：
 
 1. 询问要登出哪个 profile（或全部）。
-2. **先预览**：`<bin> logout --profile <p> --dry-run` → 展示将清除哪些缓存文件。
-3. 确认后执行：`<bin> logout --profile <p>`（或 `logout` 清全部）。
+2. **先预览**：`<bin> logout --profile <p> --dry-run` → 展示将清除哪些缓存文件。当前 logout 不支持 --config；若使用独立配置，对该次子进程设置 `ALIBABA_CLOUD_IDAAS_CONFIG_FILE=<本轮绝对路径>`，不改全局环境或编造参数。独立配置仍共享缓存，dry-run 不能证明其他配置文件的消费者不受影响，须说明影响边界。
+3. 确认后用相同进程环境执行：`<bin> logout --profile <p>`；仅用户明确要求全局清理时才执行无 profile 的 logout。
 4. 告知：profile 配置保留，重新 `login` 即可恢复。
 
 ---
@@ -205,7 +207,7 @@ Broker 输出含 `createdByPermissionTemplate` 时，在选择列表中加「模
 | **tccli（静态凭证）** | ⚠️ | `onboard --target tencentcloud-cli` 写 `~/.tccli/<profile>.credential`（Windows: `%USERPROFILE%\.tccli\<profile>.credential`），临时凭证需定期用 `fetch-token --profile <p> --output ~/.tccli/<p>.credential` 刷新。 |
 | **阿里云 SDK（credentials_uri）** | 🔧 进行中 | 需 `serve` + `ALIBABA_CLOUD_CREDENTIALS_URI` env。onboard 暂不自动写。如实说明现状。 |
 
-> **安全边界**：`fetch-token` 的 stdout 含完整 STS，仅供 CLI 消费。**本技能不得直接运行 `fetch-token`、也不得捕获或回显其 stdout**。
+> **安全边界**：`fetch-token` 的凭证 stdout 仅供 CLI 消费，本技能不得捕获或回显。仅在用户需要刷新 tccli 指定文件时，可用显式 `--output <绝对路径>` 直接落文件；不读取文件内容，也不运行会把凭证输出到对话中的命令。
 
 ## 失败处理
 
@@ -215,6 +217,6 @@ Broker 输出含 `createdByPermissionTemplate` 时，在选择列表中加「模
 
 | 现象 | 排查方向 |
 |------|---------|
-| refresh token 过期（长期未用） | `<bin> login --instance <域名> [--client-id <app_id>] --force-new` 重新登录（不是 `--profile`，因为 refresh 已失效需重新设备码；实例域名必填，`--client-id` 仅在覆盖内置系统应用时提供）。 |
+| refresh token 过期（长期未用） | 确认是登录阶段错误后，用 `<bin> login --profile <p> [--config <本轮绝对配置路径>] --force-new` 重新授权；无 profile 时显式指定实例和已确认的 client-id，不重跑 onboard。 |
 | `IDAAS_PROFILE` 未设 | 省略 `--profile` 时 broker 按优先级解析 profile：flag > env > onboard 写入的 `current_profile` 兜底；需显式指定时设置环境变量（Mac: `echo 'export IDAAS_PROFILE=<profile名>' >> ~/.zshrc && source ~/.zshrc`；Linux: `echo 'export IDAAS_PROFILE=<profile名>' >> ~/.bashrc && source ~/.bashrc`；Windows PowerShell: `[Environment]::SetEnvironmentVariable("IDAAS_PROFILE", "<profile名>", "User"); $env:IDAAS_PROFILE = "<profile名>"`）。 |
 | serve daemon 未运行（SDK 路径） | 执行 `<bin> serve --ssrf-token <token>` 启动。确认 `ALIBABA_CLOUD_CREDENTIALS_URI` 环境变量已设。 |
