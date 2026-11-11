@@ -2,6 +2,20 @@
 
 流程各阶段出错时，按本文件对应小节排查。运行时（onboard 完成后）的高频问题保留在 SKILL.md 就地可读。
 
+## 认证与授权阶段口径
+
+| 阶段 | 可以确认什么 | 不能据此推断什么 |
+| --- | --- | --- |
+| 身份认证 | 用户完成密码/MFA，或复用门户 SSO 会话 | 看到授权确认页面不代表重新输入密码或又认证一次。 |
+| 设备码生成 | 成功调用设备码端点，产生独立设备流；可关联 generate_device_code 审计及请求标识 | 登录成功审计条数不等于设备流次数。 |
+| 授权确认 | 用户同意当前设备流的客户端与 scope 请求 | 不证明两个账号不同，也不等于 Token 已换发成功。 |
+| OAuth Token 换发/刷新 | 设备授权轮询或刷新请求成功 | 不证明云角色已授权、配置已写入或 STS 已可用。 |
+| STS 消费与云调用 | Broker 换发成功后，由具体云 CLI 身份调用验证账号/角色 | 角色列表可见、缓存文件存在都不能代替该验证。 |
+
+若 onboard 后的首次云调用再次出现授权页面，先标记触发命令及阶段，核对实例、issuer、最终 client-id 和 scope 是否一致，并在本地判断是否出现新的 user_code；对外只报告新设备流次数及可用请求标识，不转存完整设备码、授权 URL、Token 或普通日志。仅需确认时不能描述为“再次身份认证”。证据不足明确标未知，不猜测缓存根因、不自动重新登录，不清 seed、不做全局 logout。
+
+status 的 config_state=loaded 只说明选中配置已读取；cache_readability、login_state、cloud_api_verification=not_checked 分别表示尚未核验，不能合并成“登录有效”。该命令不解密缓存或调用云 API；实际云调用结果由本轮 A7 单独记录，不把历史成功自动当作当前状态。
+
 ## 安装阶段
 
 | 现象 | 排查方向 |
@@ -51,7 +65,7 @@
 | `OperationDenied.BatchSizeExceed`（或 API 映射后的对应超限错误） | 服务端在查询超过保护阈值时拒绝请求，不是空授权或登录失效。当前模板详情计数上限 100、合并去重原始角色 ID 上限 500；联系管理员检查授权规模及服务端具体错误信息。不通过缩小 maxResults、截断结果或切回 false 绕过。 |
 | 翻页 token 类型/查询上下文校验失败 | 同一轮分页须始终使用 true，并沿用原实例与主体。检查 Broker 是否续页漏传参数，或服务端是否仍有旧版本实例。服务升级/回滚后丢弃旧分页 token，从第一页重新发现，不复用 false 模式 token；问题持续时停止重试并联系维护人员。 |
 | 角色可见但换凭证失败 | 列表可见不等于已通过换凭证验证。按下方“验证阶段”核对角色、模板授权与云侧信任配置；不输出 STS，也不通过补长期 AK 绕过。 |
-| API 401 | access token 已过期。`<bin> login --profile <p>` 刷新后重试；失败（refresh token 也过期或无 profile）则 `<bin> login --instance <域名> --force-new` 重新登录。 |
+| API 401 | 可能是 Token 过期或无效，先核对错误阶段、实例、issuer/client-id/scope 及服务端错误。确认需刷新时运行 `<bin> login --profile <p> [--config <本轮绝对配置路径>]`；无 profile 时保留显式实例/客户端。不要把签名失败或授权不足直接当作登录过期。 |
 | HTTP 200 但响应体 code=401、签名失败 | 不等同于 access token 过期。确认 Broker 没有发送空查询参数，使用实例发现返回的端点；停止将该响应解释为空角色列表，交维护方排查签名链路。 |
 | API 403 | token 的 aud/scope 不满足 PAM 换发权限。当前默认 scope 为 `urn:cloud:idaas:pam\|.all offline_access`；若自定义了 `--scope`，确认包含所需 PAM scope。 |
 | API 500 / 502 / 503 | 服务端临时不可用。稍后重试；若持续出现，联系管理员检查服务端状态。 |
@@ -61,7 +75,7 @@
 
 | 现象 | 排查方向 |
 |------|---------|
-| 配置文件损坏 | `~/.aliyun/config.json`、`~/.aws/config`、`~/.tccli/<profile>.credential`、`~/.cloud_idaas/idaas-cli.json`（Windows PowerShell: 将 `~/` 换为 `$env:USERPROFILE\`）损坏或无法解析。备份后删除，重试 onboard。 |
+| 配置文件损坏 | `~/.aliyun/config.json`、`~/.aws/config`、`~/.tccli/<profile>.credential`、`~/.cloud_idaas/idaas-cli.json`（Windows PowerShell: 将 `~/` 换为 `$env:USERPROFILE\`）损坏或无法解析。停止写入并保留原文件；只根据错误修复具体配置段或权限，不删除整份配置。成功后仅重试失败 target。 |
 | `~/.aliyun/` 写入失败 | 检查目录权限或手动创建（Mac/Linux: `mkdir -p ~/.aliyun`; Windows PowerShell: `New-Item -ItemType Directory -Force "$env:USERPROFILE\.aliyun"`）。 |
 | `~/.aws/` 写入失败 | 检查目录权限或手动创建（Mac/Linux: `mkdir -p ~/.aws`; Windows PowerShell: `New-Item -ItemType Directory -Force "$env:USERPROFILE\.aws"`）。 |
 | `~/.tccli/` 写入失败 | 检查目录权限或手动创建（Mac/Linux: `mkdir -p ~/.tccli`; Windows PowerShell: `New-Item -ItemType Directory -Force "$env:USERPROFILE\.tccli"`）。 |
@@ -73,7 +87,18 @@
 |------|---------|
 | 换发 `obtain` 403 | 角色未完成云厂商侧配置 / IDaaS未授权用户/组。 |
 | 换发 `obtain` 400 `invalid_client_credential` / `invalid_audience` | 服务端 PAM→云 STS 内部联邦的 `client_assertion(private_key_jwt)` audience 配置无效。**非客户端可修复**，需联系后端/管理员核对云账号 onboarding 与联邦 audience。Profile 已生成，修复后直接重试，无需重新 onboard。 |
-| aliyun-cli profile 不存在 | 确认 `--target aliyun-cli` 是否指定。手动检查 Mac/Linux: `cat ~/.aliyun/config.json`; Windows PowerShell: `Get-Content "$env:USERPROFILE\.aliyun\config.json"`。 |
-| aws-cli profile 不存在 | 确认 `--target aws-cli` 是否指定。手动检查 Mac/Linux: `cat ~/.aws/config`; Windows PowerShell: `Get-Content "$env:USERPROFILE\.aws\config"`。 |
+| aliyun-cli profile 不存在 | 确认 `--target aliyun-cli` 是否指定。仅核对 profile 名称、mode 和非敏感命令路径，不回显整份配置。 |
+| aws-cli profile 不存在 | 确认 `--target aws-cli` 是否指定。仅核对具名 section、region 和生成的非敏感命令，不回显配置或 credentials 文件。 |
 | tccli credential 不存在或为空 | 确认 `--target tencentcloud-cli` 是否指定。手动检查 Mac/Linux: `ls ~/.tccli/*.credential`; Windows PowerShell: `Get-ChildItem "$env:USERPROFILE\.tccli\*.credential"`。。 |
 | 验证超时 | 网络延迟。直接重试 `aliyun --profile <p> sts GetCallerIdentity`、`aws --profile <p> sts get-caller-identity` 或 `tccli --profile <p> sts GetCallerIdentity`。 |
+
+## 配置兼容性与明确错误
+
+| 现象 | 处理 |
+| --- | --- |
+| instance/client-id ambiguous | 明确用户要接入的实例和应用，用显式参数或选定的 Broker profile，不从其他实例继承客户端。 |
+| AWS InvalidClientTokenId | 先核对角色 ARN partition、profile region 和命令/环境地域覆盖；中国区不应使用 us-east-1。不能直接认定 IDaaS Token 无效。 |
+| region conflicts with partition | 保留现有配置，向用户说明冲突；确认后用支持的 --aws-region 选兼容地域，仅重试 aws-cli。 |
+| profile uses another credential provider | 原名称属于其他身份，不能覆盖。选择新 prefix，并保留旧脚本引用。 |
+| config is locked / changed while updating | 其他进程可能在写配置；等待其结束并核对文件，再重试。不删除他人活跃锁或恢复旧备份覆盖新改动。 |
+| aliyun consumer does not support whitespace | 部分阿里云凭证消费端只按空白拆分命令。不能用加引号冒充已支持；选择无空格的可执行文件/配置路径，或确认支持引用的消费端后处理。不要用长期 AK 绕过。 |
