@@ -54,4 +54,6 @@
 
 首次联调可用 `<bin> onboard --instance <实例域名> --target none --config <独立测试配置文件>`，验证角色发现及 profile 生成，不覆盖日常云 CLI 配置。随后按用户选择的目标 CLI 正式接入并执行 A7 身份验证。
 
-新版 `show roles --json` 保留顶层 `entities`，输出全部页聚合结果；`totalCount` 为本次实际汇总条数，不带未消费的 `nextToken`。它不是服务端单页响应原样透传，不将单页 `maxResults` 套到聚合结果。`TEMPLATE-CREATED` / `template-created` 的 yes/no/unknown 分别展示为“模板创建：是/否/未知”。
+新版 `show roles --json` 保留顶层 `entities`，输出全部页聚合结果；`totalCount` 为本次实际汇总条数，不带未消费的 `nextToken`。它不是服务端单页响应原样透传，不将单页 `maxResults` 套到聚合结果。
+
+角色列表按 SKILL.md 流程 B 的六列展示，不再单独显示模板创建标志、厂商、状态或 ARN 列。保留原有表格风格，编号左对齐，不添加左侧占位空格，支持列宽设置的宿主采用内容最小宽度；Markdown 不使用右对齐分隔符，不承诺自动渲染器的固定列宽，不自行改为等宽文本。账号名称、账号描述、模板名称、角色名称使用各自原始字段；描述优先模板描述，空时回退角色描述。所有文本完整展示，空值用 `-`，表格内竖线与换行安全转义。旧服务没有新增字段时不得猜测或自动重登。`createdByPermissionTemplate` 在结构化结果中保留原义，不据此推断授权来源。选择后按角色 ID/ARN 核对实际 profile。
