@@ -12,6 +12,7 @@ Agent Skills for IDaaS users: connect local cloud CLIs and migrate application c
 | [idaas-java-akless-onboard](idaas-java-akless-onboard/SKILL.md) | Migrate Java OSS, SLS and generic OpenAPI clients away from static AccessKeys | Application repository, platform configuration, role ARN, deployment identity for runtime validation |
 | [idaas-go-akless-onboard](idaas-go-akless-onboard/SKILL.md) | Migrate Go OSS, SLS and generic OpenAPI clients away from static AccessKeys | Application repository, platform configuration, role ARN, deployment identity for runtime validation |
 | [idaas-python-akless-onboard](idaas-python-akless-onboard/SKILL.md) | Migrate Python OSS, SLS and generic OpenAPI clients away from static AccessKeys | Python 3.9+, application repository, platform configuration, role ARN |
+| [idaas-typescript-akless-onboard](idaas-typescript-akless-onboard/SKILL.md) | Migrate Node.js TypeScript or JavaScript OSS, SLS and generic OpenAPI clients to short-lived credentials | Node.js 20/22/24, application repository, platform configuration, role ARN, deployment identity for runtime validation |
 
 Use `idaas-cred-init` for interactive access from a developer's computer. To migrate application code, prepare the required platform configuration and identity, then use the corresponding language skill.
 

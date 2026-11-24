@@ -12,6 +12,7 @@
 | [idaas-java-akless-onboard](idaas-java-akless-onboard/SKILL.md) | 改造 Java OSS、SLS、通用 OpenAPI 的静态 AccessKey 认证 | 业务仓库、平台配置、角色 ARN；运行验证另需部署身份 |
 | [idaas-go-akless-onboard](idaas-go-akless-onboard/SKILL.md) | 改造 Go OSS、SLS、通用 OpenAPI 的静态 AccessKey 认证 | 业务仓库、平台配置、角色 ARN；运行验证另需部署身份 |
 | [idaas-python-akless-onboard](idaas-python-akless-onboard/SKILL.md) | 改造 Python OSS、SLS、通用 OpenAPI 的静态 AccessKey 认证 | Python 3.9+、业务仓库、平台配置、角色 ARN |
+| [idaas-typescript-akless-onboard](idaas-typescript-akless-onboard/SKILL.md) | 将 Node.js TypeScript 或 JavaScript 的 OSS、SLS、通用 OpenAPI 客户端迁移到短期凭证 | Node.js 20/22/24、业务仓库、平台配置、角色 ARN；运行验证另需部署身份 |
 
 开发者本机交互接入使用 `idaas-cred-init`。如需改造业务代码，准备好相应平台配置和身份后，再使用对应语言 Skill。
 
